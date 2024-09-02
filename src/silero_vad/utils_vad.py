@@ -2,6 +2,7 @@ import torch
 import torchaudio
 from typing import Callable, List
 import warnings
+import numpy as np
 
 languages = ['ru', 'en', 'de', 'es']
 
@@ -308,6 +309,7 @@ def get_speech_timestamps(audio: torch.Tensor,
     temp_end = 0  # to save potential segment end (and tolerate some silence)
     prev_end = next_start = 0  # to save potential segment limits in case of maximum segment size reached
 
+    speech_prob_list = []
     for i, speech_prob in enumerate(speech_probs):
         if (speech_prob >= threshold) and temp_end:
             temp_end = 0
@@ -316,21 +318,25 @@ def get_speech_timestamps(audio: torch.Tensor,
 
         if (speech_prob >= threshold) and not triggered:
             triggered = True
+            speech_prob_list = [speech_prob]
             current_speech['start'] = window_size_samples * i
             continue
 
         if triggered and (window_size_samples * i) - current_speech['start'] > max_speech_samples:
             if prev_end:
                 current_speech['end'] = prev_end
+                current_speech['prob'] = np.mean(speech_prob_list)
                 speeches.append(current_speech)
                 current_speech = {}
                 if next_start < prev_end:  # previously reached silence (< neg_thres) and is still not speech (< thres)
                     triggered = False
                 else:
                     current_speech['start'] = next_start
+                    speech_prob_list = [speech_prob]
                 prev_end = next_start = temp_end = 0
             else:
                 current_speech['end'] = window_size_samples * i
+                current_speech['prob'] = np.mean(speech_prob_list)
                 speeches.append(current_speech)
                 current_speech = {}
                 prev_end = next_start = temp_end = 0
@@ -343,18 +349,23 @@ def get_speech_timestamps(audio: torch.Tensor,
             if ((window_size_samples * i) - temp_end) > min_silence_samples_at_max_speech:  # condition to avoid cutting in very short silence
                 prev_end = temp_end
             if (window_size_samples * i) - temp_end < min_silence_samples:
+                speech_prob_list.append(speech_prob)
                 continue
             else:
                 current_speech['end'] = temp_end
+                current_speech['prob'] = np.mean(speech_prob_list)
                 if (current_speech['end'] - current_speech['start']) > min_speech_samples:
                     speeches.append(current_speech)
                 current_speech = {}
+                speech_prob_list = []
                 prev_end = next_start = temp_end = 0
                 triggered = False
                 continue
+        speech_prob_list.append(speech_prob)
 
     if current_speech and (audio_length_samples - current_speech['start']) > min_speech_samples:
         current_speech['end'] = audio_length_samples
+        current_speech['prob'] = np.mean(speech_prob_list)
         speeches.append(current_speech)
 
     for i, speech in enumerate(speeches):
